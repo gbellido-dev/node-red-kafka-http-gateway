@@ -10,7 +10,7 @@ Read and publish Kafka records through an HTTPS gateway with an offset-based JSO
 
 The optional **Connect IP** setting overrides DNS resolution while retaining the certificate hostname and HTTP host. TLS verification is always enabled and credentials are stored as Node-RED credentials.
 
-The consumer keeps its next offset in Node-RED node context. Choose **New records** to start at the end of the topic when there is no stored cursor, or **Earliest retained record** to read existing records. Configure persistent Node-RED context if offsets should survive a runtime restart. Both synchronous and asynchronous context stores are supported. The producer publishes messages one at a time, in the order they arrive, and adds a receipt to `msg.kafka` only after the gateway returns HTTP 201. A failed request may have reached the broker, so replaying a failed publish can create a duplicate. `msg.payload` must be a JSON value; Buffers and other binary payloads are rejected.
+The consumer keeps its next offset in Node-RED node context. Choose **New records** to start at the end of the topic when there is no stored cursor, or **Earliest retained record** to read existing records. Configure persistent Node-RED context if offsets should survive a runtime restart. Both synchronous and asynchronous context stores are supported. The producer publishes messages one at a time, in the order they arrive, and adds a receipt to `msg.kafka` only after the gateway returns HTTP 201. A failed request may have reached the broker, so replaying a failed publish can create a duplicate. A Buffer, typed array or ArrayBuffer in `msg.payload` is published as raw bytes; any other payload is published as a JSON value.
 
 An example flow is available in Node-RED under **Import → Examples → @gbellido/node-red-kafka-http-gateway**.
 
@@ -21,11 +21,11 @@ The server must implement the following contract over HTTPS. These nodes are cli
 | Method | Route | Contract |
 |---|---|---|
 | GET | `/kafka/v1/topics/<topic>/messages` | Accepts optional `offset` and `limit`. Without `offset`, the page starts at the earliest retained record. HTTP 200 returns `topic`, `partition`, `endOffset`, `nextOffset`, and `records`. Each record contains `key`, `offset`, `timestamp`, and `value` as JSON or `valueBase64` for raw bytes. |
-| POST | `/kafka/v1/topics/<topic>/messages` | Accepts `{"value": <JSON value>}` and returns HTTP 201 with `topic`, `partition`, `key`, and `offset`. The gateway uses the topic name as the record key. |
+| POST | `/kafka/v1/topics/<topic>/messages` | Accepts `{"value": <JSON value>}`, or `{"valueBase64": "<base64>"}` for raw bytes, and returns HTTP 201 with `topic`, `partition`, `key`, and `offset`. The gateway uses the topic name as the record key. |
 
 Offsets are nonnegative decimal strings, and `endOffset` is exclusive. A successful empty page keeps the requested offset as `nextOffset`. On HTTP 410, the gateway returns `earliestOffset` and the consumer resumes there. On HTTP 416, the gateway returns `endOffset` and the consumer resumes at the current end.
 
-This release supports one partition per topic, with partition ID 0. Topic names contain lowercase ASCII letters, digits and hyphens. The consumer defaults to up to 100 records every five seconds, and POST JSON bodies are limited to 128 KiB. Each output record has the value in `msg.payload` and metadata in `msg.kafka`. Raw values are emitted as a Buffer.
+This release supports one partition per topic, with partition ID 0. Topic names contain lowercase ASCII letters, digits and hyphens. The consumer defaults to up to 100 records every five seconds, and POST JSON bodies are limited to 128 KiB, so raw values can be up to about 96 KiB after base64 encoding. Each output record has the value in `msg.payload` and metadata in `msg.kafka`. Raw values are emitted as a Buffer.
 
 ## Publish this package
 

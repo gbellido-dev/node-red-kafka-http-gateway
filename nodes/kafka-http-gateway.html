@@ -88,8 +88,8 @@
 </script>
 
 <script type="text/html" data-help-name="kafka-http-producer">
-    <p>Publishes <code>msg.payload</code> as a JSON value to the configured topic and adds the confirmed topic, partition, key and offset to <code>msg.kafka</code>.</p>
-    <p>Messages are published one at a time in arrival order. Binary payloads such as Buffers are rejected because the gateway accepts JSON values only.</p>
+    <p>Publishes <code>msg.payload</code> to the configured topic and adds the confirmed topic, partition, key and offset to <code>msg.kafka</code>.</p>
+    <p>Messages are published one at a time in arrival order. A Buffer, typed array or ArrayBuffer is published as raw bytes; any other payload is published as a JSON value. A string is published as a JSON string, so convert it to a Buffer first to send raw text bytes.</p>
     <p>The gateway sets the key to the topic name. Publication errors can be handled with a Catch node.</p>
 </script>
 

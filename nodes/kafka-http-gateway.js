@@ -20,6 +20,14 @@ function integer(value, min, max, label) {
     return number;
 }
 
+// Buffers, typed arrays and ArrayBuffers are sent as raw bytes; anything else is a JSON value.
+function binary(value) {
+    if (Buffer.isBuffer(value)) return value;
+    if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    if (value instanceof ArrayBuffer) return Buffer.from(value);
+    return undefined;
+}
+
 function topicName(value) {
     if (typeof value !== 'string' || !/^[a-z0-9-]{1,249}$/.test(value)) {
         throw new Error('Enter a gateway topic containing lowercase letters, digits or hyphens');
@@ -61,12 +69,10 @@ function createClient(config, credentials) {
         if (authorization) headers.Authorization = authorization;
         let body;
         if (method === 'POST') {
-            if (value === undefined) throw new Error('msg.payload must be a JSON value');
-            if (Buffer.isBuffer(value) || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
-                throw new Error('msg.payload must be a JSON value; binary payloads are not supported');
-            }
-            body = JSON.stringify({ value });
-            if (body === '{}') throw new Error('msg.payload must be a JSON value');
+            if (value === undefined) throw new Error('msg.payload must be a JSON value or a Buffer');
+            const bytes = binary(value);
+            body = JSON.stringify(bytes ? { valueBase64: bytes.toString('base64') } : { value });
+            if (body === '{}') throw new Error('msg.payload must be a JSON value or a Buffer');
             const size = Buffer.byteLength(body);
             if (size > maxRequestBytes) throw new Error('Payload exceeds the 128 KiB request limit');
             headers['Content-Type'] = 'application/json';

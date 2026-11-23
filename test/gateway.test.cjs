@@ -131,7 +131,12 @@ if (!certificateDirectory) {
             assert.equal(requests[0].authorization, 'Basic ' + Buffer.from('sample:test-only').toString('base64'));
             assert.equal(requests[0].url.pathname, '/kafka/v1/topics/device-one/messages');
             await assert.rejects(publish({}), /msg.payload/);
-            await assert.rejects(publish({ payload: Buffer.from('raw') }), /binary payloads/);
+            const raw = await publish({ payload: Buffer.from([0, 1, 254, 255]) });
+            assert.equal(raw.kafka.offset, '1');
+            assert.deepEqual(JSON.parse(requests[1].body), { valueBase64: 'AAH+/w==' });
+            await publish({ payload: new Uint8Array([1, 2, 3, 4]).subarray(1, 3) });
+            assert.deepEqual(JSON.parse(requests[2].body), { valueBase64: 'AgM=' });
+            requests.splice(1, 2);
 
             consumer = deploy('kafka-http-consumer', { gateway: 'gateway', topic: 'device-one', interval: 1000 });
             const [record] = await once(consumer, 'sent', { signal: AbortSignal.timeout(5000) });
