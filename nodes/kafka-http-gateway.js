@@ -1,11 +1,11 @@
 'use strict';
 
 const https = require('node:https');
+const tls = require('node:tls');
 const { isIP } = require('node:net');
 const { createHash } = require('node:crypto');
 
-const maxRequestBytes = 128 * 1024;
-const maxResponseBytes = 3 * 1024 * 1024;
+const responseTooLarge = 'ERR_KAFKA_HTTP_RESPONSE_TOO_LARGE';
 
 function offset(value) {
     return typeof value === 'string' && /^(0|[1-9][0-9]{0,18})$/.test(value)
@@ -26,6 +26,21 @@ function binary(value) {
     if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     if (value instanceof ArrayBuffer) return Buffer.from(value);
     return undefined;
+}
+
+// A custom CA is trusted in addition to the system roots, like NODE_EXTRA_CA_CERTS.
+function certificateAuthorities(value) {
+    const pem = String(value || '').trim();
+    if (!pem) return undefined;
+    if (!pem.includes('-----BEGIN CERTIFICATE-----')) {
+        throw new Error('CA certificate must be in PEM format');
+    }
+    try {
+        tls.createSecureContext({ ca: pem });
+    } catch {
+        throw new Error('CA certificate could not be parsed');
+    }
+    return [...tls.rootCertificates, pem];
 }
 
 function topicName(value) {
@@ -54,12 +69,17 @@ function gatewayOptions(config, credentials = {}) {
         : undefined;
     return {
         base, hostname, address, authorization,
+        ca: certificateAuthorities(config.ca),
         timeout: integer(config.timeout || 20000, 500, 120000, 'Timeout'),
+        maxRequestKiB: integer(config.maxRequestKiB || 128, 1, 16384, 'Maximum request size'),
+        maxResponseMiB: integer(config.maxResponseMiB || 16, 1, 256, 'Maximum response size'),
     };
 }
 
 function createClient(config, credentials) {
-    const { base, hostname, address, authorization, timeout } = gatewayOptions(config, credentials);
+    const { base, hostname, address, authorization, ca, timeout, maxRequestKiB, maxResponseMiB } = gatewayOptions(config, credentials);
+    const maxRequestBytes = maxRequestKiB * 1024;
+    const maxResponseBytes = maxResponseMiB * 1024 * 1024;
     const agent = new https.Agent({ keepAlive: true, maxSockets: 8, maxFreeSockets: 2 });
 
     async function request(method, topic, { query, value } = {}) {
@@ -74,7 +94,9 @@ function createClient(config, credentials) {
             body = JSON.stringify(bytes ? { valueBase64: bytes.toString('base64') } : { value });
             if (body === '{}') throw new Error('msg.payload must be a JSON value or a Buffer');
             const size = Buffer.byteLength(body);
-            if (size > maxRequestBytes) throw new Error('Payload exceeds the 128 KiB request limit');
+            if (size > maxRequestBytes) {
+                throw new Error('Payload exceeds the ' + maxRequestKiB + ' KiB request limit of the gateway configuration');
+            }
             headers['Content-Type'] = 'application/json';
             headers['Content-Length'] = size;
         }
@@ -87,6 +109,7 @@ function createClient(config, credentials) {
                 method,
                 headers,
                 agent,
+                ca,
                 rejectUnauthorized: true,
                 signal: AbortSignal.timeout(timeout),
             }, response => {
@@ -96,7 +119,9 @@ function createClient(config, credentials) {
                 response.on('data', chunk => {
                     bytes += chunk.length;
                     if (bytes > maxResponseBytes) {
-                        response.destroy(new Error('Gateway response exceeds 3 MiB'));
+                        const error = new Error('Gateway response exceeds the ' + maxResponseMiB + ' MiB response limit');
+                        error.code = responseTooLarge;
+                        response.destroy(error);
                         return;
                     }
                     chunks.push(chunk);
@@ -153,7 +178,8 @@ module.exports = function register(RED) {
         const publish = async (msg, send, done) => {
             try {
                 if (!client) throw new Error('Select a valid Kafka HTTP gateway');
-                const topic = topicName(config.topic);
+                // A topic set on the node takes precedence; otherwise msg.topic selects it.
+                const topic = topicName(config.topic || msg.topic);
                 const { status, body } = await client.request('POST', topic, { value: msg.payload });
                 if (status !== 201) throw responseError(status);
                 if (body?.topic !== topic || body.key !== topic || body.partition !== 0 || !offset(body.offset)) {
@@ -204,6 +230,7 @@ module.exports = function register(RED) {
             state.set(cursorKey, value, error => (error ? reject(error) : resolve()));
         });
         let next;
+        let pageSize = limit;
         let loaded = false;
         let timer;
         let closing = false;
@@ -213,7 +240,24 @@ module.exports = function register(RED) {
             clearTimeout(timer);
         });
 
+        // Halve the page while a response is over the size limit, so large records cannot block the cursor.
+        const readPage = async query => {
+            for (;;) {
+                try {
+                    return await client.request('GET', topic, { query });
+                } catch (error) {
+                    if (error.code !== responseTooLarge) throw error;
+                    if (query.limit === 1) {
+                        throw new Error(error.message + ' with a single record. Raise the maximum response size of the gateway.');
+                    }
+                    query.limit = Math.ceil(query.limit / 2);
+                    if (closing) throw error;
+                }
+            }
+        };
+
         const fetchPage = async () => {
+            let delay = interval;
             try {
                 if (!loaded) {
                     const stored = await load();
@@ -222,9 +266,9 @@ module.exports = function register(RED) {
                     loaded = true;
                 }
                 const initialLatest = next === undefined && config.start !== 'earliest';
-                const query = { limit: initialLatest ? 1 : limit };
+                const query = { limit: initialLatest ? 1 : pageSize };
                 if (next !== undefined) query.offset = next;
-                const { status, body } = await client.request('GET', topic, { query });
+                const { status, body } = await readPage(query);
                 if (closing) return;
                 if (status === 410 && offset(body?.earliestOffset)) {
                     this.warn('Offset expired. Resuming from the earliest retained record.');
@@ -246,6 +290,12 @@ module.exports = function register(RED) {
                         }
                     }
                     next = initialLatest ? body.endOffset : body.nextOffset;
+                    if (!initialLatest) {
+                        pageSize = query.limit;
+                        // A full page means more records are probably waiting: read again without waiting.
+                        if (body.records.length === query.limit && next !== body.endOffset) delay = 0;
+                        else pageSize = limit;
+                    }
                 }
                 await save(next);
                 previousError = undefined;
@@ -256,7 +306,7 @@ module.exports = function register(RED) {
                 if (error.message !== previousError) this.error(error.message);
                 previousError = error.message;
             } finally {
-                if (!closing) timer = setTimeout(fetchPage, interval);
+                if (!closing) timer = setTimeout(fetchPage, delay);
             }
         };
         this.status({ fill: 'yellow', shape: 'ring', text: 'connecting' });

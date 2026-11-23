@@ -26,6 +26,12 @@
             }},
             connectAddress: { value: '', validate: ipAddress },
             timeout: { value: 20000, required: true, validate: range(500, 120000) },
+            maxRequestKiB: { value: 128, required: true, validate: range(1, 16384) },
+            maxResponseMiB: { value: 16, required: true, validate: range(1, 256) },
+            ca: { value: '', validate(value) {
+                value = String(value || '').trim();
+                return !value || value.includes('-----BEGIN CERTIFICATE-----');
+            }},
         },
         credentials: { username: { type: 'text' }, password: { type: 'password' } },
         label() { return this.name || this.baseUrl || 'Kafka HTTPS gateway'; }
@@ -37,7 +43,7 @@
         defaults: {
             name: { value: '' },
             gateway: { value: '', type: 'kafka-http-gateway-config', required: true },
-            topic: { value: '', required: true, validate: RED.validators.regex(/^[a-z0-9-]{1,249}$/) },
+            topic: { value: '', validate: RED.validators.regex(/^([a-z0-9-]{1,249})?$/) },
         },
         inputs: 1,
         outputs: 1,
@@ -73,23 +79,30 @@
     <div class="form-row"><label for="node-config-input-password">Password</label><input type="password" id="node-config-input-password"></div>
     <div class="form-row"><label for="node-config-input-connectAddress">Connect IP</label><input type="text" id="node-config-input-connectAddress" placeholder="Optional IPv4 or IPv6 address"></div>
     <div class="form-row"><label for="node-config-input-timeout">Timeout (ms)</label><input type="number" id="node-config-input-timeout" min="500" max="120000"></div>
+    <div class="form-row"><label for="node-config-input-maxRequestKiB">Max request (KiB)</label><input type="number" id="node-config-input-maxRequestKiB" min="1" max="16384"></div>
+    <div class="form-row"><label for="node-config-input-maxResponseMiB">Max response (MiB)</label><input type="number" id="node-config-input-maxResponseMiB" min="1" max="256"></div>
+    <div class="form-row"><label for="node-config-input-ca">CA certificate</label><textarea id="node-config-input-ca" rows="6" style="width: 70%; font-family: monospace; font-size: 11px;" placeholder="Optional PEM: -----BEGIN CERTIFICATE-----"></textarea></div>
 </script>
 
 <script type="text/html" data-help-name="kafka-http-gateway-config">
     <p>Configure the HTTPS base URL and optional HTTP Basic credentials for the Kafka gateway.</p>
     <p>The username must not contain a colon. Leave both username and password empty if the gateway does not use authentication.</p>
     <p>Connect IP can route directly to an IPv4 or IPv6 address while retaining the DNS hostname for TLS verification and the HTTP Host header.</p>
+    <p><b>Max request</b> is the largest publish body sent to the gateway, including JSON and base64 encoding (default 128 KiB). Set it to the limit your gateway accepts.</p>
+    <p><b>Max response</b> is the largest page the consumer downloads (default 16 MiB). If a page is larger, the consumer retries with fewer records per request; it only fails if a single record is larger than this limit.</p>
+    <p><b>CA certificate</b> adds a PEM certificate authority, such as a private or self-signed CA, to the system trust store. TLS verification is always enabled.</p>
 </script>
 
 <script type="text/html" data-template-name="kafka-http-producer">
     <div class="form-row"><label for="node-input-name">Name</label><input type="text" id="node-input-name"></div>
     <div class="form-row"><label for="node-input-gateway">Gateway</label><input type="text" id="node-input-gateway"></div>
-    <div class="form-row"><label for="node-input-topic">Topic</label><input type="text" id="node-input-topic"></div>
+    <div class="form-row"><label for="node-input-topic">Topic</label><input type="text" id="node-input-topic" placeholder="msg.topic"></div>
 </script>
 
 <script type="text/html" data-help-name="kafka-http-producer">
     <p>Publishes <code>msg.payload</code> to the configured topic and adds the confirmed topic, partition, key and offset to <code>msg.kafka</code>.</p>
     <p>Messages are published one at a time in arrival order. A Buffer, typed array or ArrayBuffer is published as raw bytes; any other payload is published as a JSON value. A string is published as a JSON string, so convert it to a Buffer first to send raw text bytes.</p>
+    <p>If Topic is left empty, <code>msg.topic</code> selects the topic for each message. A topic set on the node takes precedence over <code>msg.topic</code>.</p>
     <p>The gateway sets the key to the topic name. Publication errors can be handled with a Catch node.</p>
 </script>
 
@@ -110,6 +123,6 @@
 
 <script type="text/html" data-help-name="kafka-http-consumer">
     <p>Polls one topic over HTTPS and emits one message per record, with the value in <code>msg.payload</code> and the key, offset, partition and timestamp in <code>msg.kafka</code>.</p>
-    <p><b>Poll</b> is the wait in milliseconds between requests to the gateway (500 to 600000). <b>Page size</b> is the maximum number of records read per request (1 to 100). If more records are pending, the rest are read on the following polls.</p>
+    <p><b>Poll</b> is the wait in milliseconds between requests to the gateway (500 to 600000). <b>Page size</b> is the maximum number of records read per request (1 to 100). When a page comes back full, the next page is requested immediately, so a backlog is read without waiting for the poll interval.</p>
     <p>The node stores its next offset in Node-RED context. First read applies when no saved offset exists. Use a persistent context store to retain the offset across system restarts.</p>
 </script>

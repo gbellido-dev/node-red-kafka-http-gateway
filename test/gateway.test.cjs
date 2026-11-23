@@ -26,8 +26,10 @@ if (!certificateDirectory) {
             ], { encoding: 'utf8' });
             assert.ifError(generated.error);
             assert.equal(generated.status, 0, generated.stderr);
-            const env = { ...process.env, KAFKA_HTTP_TEST_CERT_DIR: directory, NODE_EXTRA_CA_CERTS: cert };
+            // The certificate is trusted only through the gateway's CA certificate setting.
+            const env = { ...process.env, KAFKA_HTTP_TEST_CERT_DIR: directory };
             delete env.NODE_TEST_CONTEXT;
+            delete env.NODE_EXTRA_CA_CERTS;
             const result = spawnSync(process.execPath, ['--test', __filename], {
                 env, encoding: 'utf8', timeout: 15000,
             });
@@ -40,7 +42,7 @@ if (!certificateDirectory) {
         }
     });
 } else {
-    test('publishes, polls and verifies the gateway hostname', { timeout: 12000 }, async () => {
+    test('publishes, polls and verifies the gateway hostname', { timeout: 14000 }, async () => {
         const requests = [];
         let publishing = 0;
         let maxPublishing = 0;
@@ -58,6 +60,20 @@ if (!certificateDirectory) {
             });
             const topic = 'device-one';
             response.setHeader('Content-Type', 'application/json');
+            response.on('error', () => {});
+            if (url.pathname.endsWith('/topics/backlog/messages')) {
+                // Ten records of about 210 KiB each; endOffset is exclusive.
+                const start = Number(url.searchParams.get('offset') ?? 0);
+                const end = Math.min(start + Number(url.searchParams.get('limit')), 10);
+                const records = [];
+                for (let index = start; index < end; index += 1) {
+                    records.push({ key: 'backlog', offset: String(index), timestamp: '1', value: String(index).padEnd(210 * 1024, '.') });
+                }
+                response.end(JSON.stringify({
+                    topic: 'backlog', partition: 0, endOffset: '10', nextOffset: String(end), records,
+                }));
+                return;
+            }
             if (request.method === 'POST') {
                 publishing += 1;
                 maxPublishing = Math.max(maxPublishing, publishing);
@@ -109,6 +125,7 @@ if (!certificateDirectory) {
         const deploy = (role, config) => new (types.get(role))(config);
         const config = {
             baseUrl: 'https://gateway.example.test:' + port, connectAddress: '127.0.0.1',
+            ca: fs.readFileSync(join(certificateDirectory, 'cert.pem'), 'utf8'),
             credentials: { username: 'sample', password: 'test-only' },
         };
         const gateway = deploy('kafka-http-gateway-config', config);
@@ -116,10 +133,13 @@ if (!certificateDirectory) {
         const producer = deploy('kafka-http-producer', { gateway: 'gateway', topic: 'device-one' });
         let consumer;
         let invalidGateway;
+        let untrustedGateway;
+        let smallGateway;
+        let backlogConsumer;
         try {
-            const publish = msg => new Promise((resolve, reject) => {
+            const publish = (msg, node = producer) => new Promise((resolve, reject) => {
                 let output;
-                producer.emit('input', msg, value => { output = value; }, error => {
+                node.emit('input', msg, value => { output = value; }, error => {
                     if (error) reject(error);
                     else resolve(output);
                 });
@@ -162,7 +182,40 @@ if (!certificateDirectory) {
             assert.equal(ordered.length, 3);
             assert.deepEqual(requests.slice(3).map(entry => JSON.parse(entry.body).value.n), [1, 2, 3]);
             assert.equal(maxPublishing, 1, 'publishes must not overlap');
+
+            // Without the CA certificate setting, the self-signed certificate is rejected.
+            untrustedGateway = deploy('kafka-http-gateway-config', { ...config, ca: '' });
+            await assert.rejects(untrustedGateway.client.request('GET', 'device-one'), { code: /SELF_SIGNED/ });
+            assert.throws(() => deploy('kafka-http-gateway-config', { ...config, ca: 'not a certificate' }), /PEM/);
+            assert.equal(requests.length, 6);
+
+            // An empty producer topic uses msg.topic.
+            const dynamic = deploy('kafka-http-producer', { gateway: 'gateway', topic: '' });
+            await publish({ topic: 'device-one', payload: 1 }, dynamic);
+            assert.equal(requests[6].url.pathname, '/kafka/v1/topics/device-one/messages');
+            await assert.rejects(publish({ topic: 'Bad Topic', payload: 1 }, dynamic), /gateway topic/);
+            await assert.rejects(publish({ payload: 1 }, dynamic), /gateway topic/);
+            assert.equal(requests.length, 7);
+
+            // A 1 MiB response limit forces smaller pages; full pages are read without waiting.
+            smallGateway = deploy('kafka-http-gateway-config', { ...config, maxResponseMiB: 1, maxRequestKiB: 1 });
+            nodes.set('small', smallGateway);
+            await assert.rejects(publish({ payload: 'x'.repeat(2048) }, deploy('kafka-http-producer', { gateway: 'small', topic: 'device-one' })), /1 KiB request limit/);
+            const received = [];
+            backlogConsumer = deploy('kafka-http-consumer', {
+                gateway: 'small', topic: 'backlog', start: 'earliest', limit: 10, interval: 60000,
+            });
+            backlogConsumer.on('sent', output => received.push(output.kafka.offset));
+            const deadline = Date.now() + 5000;
+            while (received.length < 10 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+            assert.deepEqual(received, ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
+            const backlog = requests.slice(7).filter(entry => entry.url.pathname.includes('/backlog/'));
+            assert.deepEqual(backlog.map(entry => entry.url.searchParams.get('limit')), ['10', '5', '3', '3', '3', '3']);
+            assert.deepEqual(backlog.map(entry => entry.url.searchParams.get('offset')), [null, null, null, '3', '6', '9']);
         } finally {
+            backlogConsumer?.emit('close');
+            smallGateway?.emit('close');
+            untrustedGateway?.emit('close');
             consumer?.emit('close');
             invalidGateway?.emit('close');
             gateway.emit('close');

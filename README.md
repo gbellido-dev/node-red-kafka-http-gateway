@@ -6,11 +6,13 @@ Read and publish Kafka records through an HTTPS gateway with an offset-based JSO
 
 1. Use Node.js 20 or later and Node-RED 4 or later. In **Manage palette → Install**, search for `@gbellido/node-red-kafka-http-gateway`. To install from a terminal, run `npm install @gbellido/node-red-kafka-http-gateway` in your Node-RED user directory and restart Node-RED.
 2. Add a consumer or producer. Create a shared gateway configuration with your HTTPS base URL and the HTTP Basic username and password if required by the gateway.
-3. Set one topic per consumer or producer. To read, connect the consumer to a Debug node. To publish, wire a message containing the JSON value in `msg.payload` into the producer.
+3. Set one topic per consumer. For a producer, set a topic or leave it empty to use `msg.topic` for each message. To read, connect the consumer to a Debug node. To publish, wire a message containing the JSON value in `msg.payload` into the producer.
 
-The optional **Connect IP** setting overrides DNS resolution while retaining the certificate hostname and HTTP host. TLS verification is always enabled and credentials are stored as Node-RED credentials.
+The optional **Connect IP** setting overrides DNS resolution while retaining the certificate hostname and HTTP host. **CA certificate** accepts a PEM certificate authority, such as a private or self-signed CA, and trusts it in addition to the system roots. TLS verification is always enabled and credentials are stored as Node-RED credentials.
 
-The consumer keeps its next offset in Node-RED node context. Choose **New records** to start at the end of the topic when there is no stored cursor, or **Earliest retained record** to read existing records. Configure persistent Node-RED context if offsets should survive a runtime restart. Both synchronous and asynchronous context stores are supported. The producer publishes messages one at a time, in the order they arrive, and adds a receipt to `msg.kafka` only after the gateway returns HTTP 201. A failed request may have reached the broker, so replaying a failed publish can create a duplicate. A Buffer, typed array or ArrayBuffer in `msg.payload` is published as raw bytes; any other payload is published as a JSON value.
+The gateway configuration also sets the size limits. **Max request** (default 128 KiB) is the largest publish body, including JSON and base64 encoding; set it to the limit your gateway accepts. **Max response** (default 16 MiB) is the largest page the consumer downloads. If a page exceeds it, the consumer retries with fewer records per request and fails only when a single record is larger than the limit.
+
+When a page comes back full, the consumer requests the next page immediately, so a backlog is read without waiting for the poll interval. The consumer keeps its next offset in Node-RED node context. Choose **New records** to start at the end of the topic when there is no stored cursor, or **Earliest retained record** to read existing records. Configure persistent Node-RED context if offsets should survive a runtime restart. Both synchronous and asynchronous context stores are supported. The producer publishes messages one at a time, in the order they arrive, and adds a receipt to `msg.kafka` only after the gateway returns HTTP 201. A failed request may have reached the broker, so replaying a failed publish can create a duplicate. A Buffer, typed array or ArrayBuffer in `msg.payload` is published as raw bytes; any other payload is published as a JSON value.
 
 An example flow is available in Node-RED under **Import → Examples → @gbellido/node-red-kafka-http-gateway**.
 
@@ -25,7 +27,7 @@ The server must implement the following contract over HTTPS. These nodes are cli
 
 Offsets are nonnegative decimal strings, and `endOffset` is exclusive. A successful empty page keeps the requested offset as `nextOffset`. On HTTP 410, the gateway returns `earliestOffset` and the consumer resumes there. On HTTP 416, the gateway returns `endOffset` and the consumer resumes at the current end.
 
-This release supports one partition per topic, with partition ID 0. Topic names contain lowercase ASCII letters, digits and hyphens. The consumer defaults to up to 100 records every five seconds, and POST JSON bodies are limited to 128 KiB, so raw values can be up to about 96 KiB after base64 encoding. Each output record has the value in `msg.payload` and metadata in `msg.kafka`. Raw values are emitted as a Buffer.
+This release supports one partition per topic, with partition ID 0. Topic names contain lowercase ASCII letters, digits and hyphens. The consumer defaults to up to 100 records every five seconds. With the default 128 KiB request limit, raw values can be up to about 96 KiB after base64 encoding. Each output record has the value in `msg.payload` and metadata in `msg.kafka`. Raw values are emitted as a Buffer.
 
 ## Publish this package
 
