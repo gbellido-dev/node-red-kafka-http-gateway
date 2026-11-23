@@ -1,0 +1,96 @@
+<script type="text/javascript">
+    RED.nodes.registerType('kafka-http-gateway-config', {
+        category: 'config',
+        defaults: {
+            name: { value: '' },
+            baseUrl: { value: '', required: true, validate(value) {
+                try {
+                    const url = new URL(value);
+                    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash;
+                } catch { return false; }
+            }},
+            connectAddress: { value: '' },
+            timeout: { value: 20000, required: true, validate: RED.validators.number() },
+        },
+        credentials: { username: { type: 'text' }, password: { type: 'password' } },
+        label() { return this.name || this.baseUrl || 'Kafka HTTPS gateway'; }
+    });
+
+    RED.nodes.registerType('kafka-http-producer', {
+        category: 'network',
+        color: '#D9E7F0',
+        defaults: {
+            name: { value: '' },
+            gateway: { value: '', type: 'kafka-http-gateway-config', required: true },
+            topic: { value: '', required: true, validate: RED.validators.regex(/^[a-z0-9-]{1,249}$/) },
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: 'font-awesome/fa-upload',
+        paletteLabel: 'kafka http producer',
+        label() { return this.name || this.topic || 'Kafka HTTP producer'; }
+    });
+
+    RED.nodes.registerType('kafka-http-consumer', {
+        category: 'network',
+        color: '#D9E7F0',
+        defaults: {
+            name: { value: '' },
+            gateway: { value: '', type: 'kafka-http-gateway-config', required: true },
+            topic: { value: '', required: true, validate: RED.validators.regex(/^[a-z0-9-]{1,249}$/) },
+            interval: { value: 5000, required: true, validate: RED.validators.number() },
+            limit: { value: 100, required: true, validate: RED.validators.number() },
+            start: { value: 'latest' },
+        },
+        inputs: 0,
+        outputs: 1,
+        icon: 'font-awesome/fa-download',
+        paletteLabel: 'kafka http consumer',
+        label() { return this.name || this.topic || 'Kafka HTTP consumer'; }
+    });
+</script>
+
+<script type="text/html" data-template-name="kafka-http-gateway-config">
+    <div class="form-row"><label for="node-config-input-name">Name</label><input type="text" id="node-config-input-name"></div>
+    <div class="form-row"><label for="node-config-input-baseUrl">Gateway URL</label><input type="url" id="node-config-input-baseUrl" placeholder="https://gateway.example.com"></div>
+    <div class="form-row"><label for="node-config-input-username">Username</label><input type="text" id="node-config-input-username"></div>
+    <div class="form-row"><label for="node-config-input-password">Password</label><input type="password" id="node-config-input-password"></div>
+    <div class="form-row"><label for="node-config-input-connectAddress">Connect IP</label><input type="text" id="node-config-input-connectAddress" placeholder="Optional DNS override"></div>
+    <div class="form-row"><label for="node-config-input-timeout">Timeout (ms)</label><input type="number" id="node-config-input-timeout" min="1000" max="120000"></div>
+</script>
+
+<script type="text/html" data-help-name="kafka-http-gateway-config">
+    <p>Configure the HTTPS base URL and optional HTTP Basic credentials for the Kafka gateway.</p>
+    <p>Connect IP can route directly to an IPv4 or IPv6 address while retaining the DNS hostname for TLS verification and the HTTP Host header.</p>
+</script>
+
+<script type="text/html" data-template-name="kafka-http-producer">
+    <div class="form-row"><label for="node-input-name">Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-gateway">Gateway</label><input type="text" id="node-input-gateway"></div>
+    <div class="form-row"><label for="node-input-topic">Topic</label><input type="text" id="node-input-topic"></div>
+</script>
+
+<script type="text/html" data-help-name="kafka-http-producer">
+    <p>Publishes <code>msg.payload</code> as a JSON value to the configured topic and adds the confirmed topic, partition, key and offset to <code>msg.kafka</code>.</p>
+    <p>The gateway sets the key to the topic name. Publication errors can be handled with a Catch node.</p>
+</script>
+
+<script type="text/html" data-template-name="kafka-http-consumer">
+    <div class="form-row"><label for="node-input-name">Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-gateway">Gateway</label><input type="text" id="node-input-gateway"></div>
+    <div class="form-row"><label for="node-input-topic">Topic</label><input type="text" id="node-input-topic"></div>
+    <div class="form-row">
+        <label for="node-input-start">First read</label>
+        <select id="node-input-start">
+            <option value="latest">New records</option>
+            <option value="earliest">Earliest retained record</option>
+        </select>
+    </div>
+    <div class="form-row"><label for="node-input-interval">Poll (ms)</label><input type="number" id="node-input-interval" min="1000" max="600000"></div>
+    <div class="form-row"><label for="node-input-limit">Page size</label><input type="number" id="node-input-limit" min="1" max="100"></div>
+</script>
+
+<script type="text/html" data-help-name="kafka-http-consumer">
+    <p>Polls one topic over HTTPS and emits one message per record, with the value in <code>msg.payload</code> and the key, offset, partition and timestamp in <code>msg.kafka</code>.</p>
+    <p>The node stores its next offset in Node-RED context. First read applies when no saved offset exists. Use a persistent context store to retain the offset across system restarts.</p>
+</script>

@@ -1,0 +1,23 @@
+{
+  "name": "@gbellido/node-red-kafka-http-gateway",
+  "version": "0.1.0",
+  "description": "Node-RED producer and consumer for an offset-based Kafka HTTPS gateway",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["node-red", "kafka", "https"],
+  "files": ["nodes/", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "node-red": {
+    "version": ">=4.0.0",
+    "nodes": {
+      "kafka-http-gateway": "nodes/kafka-http-gateway.js"
+    }
+  }
+}
