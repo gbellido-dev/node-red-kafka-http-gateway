@@ -3,11 +3,28 @@
   "version": "0.1.0",
   "description": "Node-RED producer and consumer for an offset-based Kafka HTTPS gateway",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gbellido-dev/node-red-kafka-http-gateway.git"
+  },
+  "homepage": "https://github.com/gbellido-dev/node-red-kafka-http-gateway#readme",
+  "bugs": {
+    "url": "https://github.com/gbellido-dev/node-red-kafka-http-gateway/issues"
+  },
   "engines": {
     "node": ">=20"
   },
-  "keywords": ["node-red", "kafka", "https"],
-  "files": ["nodes/", "README.md", "LICENSE"],
+  "keywords": [
+    "node-red",
+    "kafka",
+    "https"
+  ],
+  "files": [
+    "nodes/",
+    "examples/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test"
   },

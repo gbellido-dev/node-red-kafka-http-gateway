@@ -62,6 +62,9 @@ function createClient(config, credentials) {
         let body;
         if (method === 'POST') {
             if (value === undefined) throw new Error('msg.payload must be a JSON value');
+            if (Buffer.isBuffer(value) || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+                throw new Error('msg.payload must be a JSON value; binary payloads are not supported');
+            }
             body = JSON.stringify({ value });
             if (body === '{}') throw new Error('msg.payload must be a JSON value');
             const size = Buffer.byteLength(body);
@@ -139,7 +142,9 @@ module.exports = function register(RED) {
     function Producer(config) {
         RED.nodes.createNode(this, config);
         const client = RED.nodes.getNode(config.gateway)?.client;
-        this.on('input', async (msg, send, done) => {
+        let pending = 0;
+        let queue = Promise.resolve();
+        const publish = async (msg, send, done) => {
             try {
                 if (!client) throw new Error('Select a valid Kafka HTTP gateway');
                 const topic = topicName(config.topic);
@@ -149,14 +154,23 @@ module.exports = function register(RED) {
                     throw new Error('Gateway returned an invalid publish receipt');
                 }
                 msg.kafka = { topic, partition: body.partition, key: body.key, offset: body.offset };
-                this.status({ fill: 'green', shape: 'dot', text: 'published' });
+                if (pending === 1) this.status({ fill: 'green', shape: 'dot', text: 'offset ' + body.offset });
                 send(msg);
                 done();
             } catch (error) {
                 this.status({ fill: 'red', shape: 'ring', text: 'publish failed' });
                 done(error);
+            } finally {
+                pending -= 1;
             }
+        };
+        // Publish one message at a time so records reach the topic in arrival order.
+        this.on('input', (msg, send, done) => {
+            pending += 1;
+            if (pending > 1) this.status({ fill: 'blue', shape: 'dot', text: pending + ' queued' });
+            queue = queue.then(() => publish(msg, send, done));
         });
+        this.on('close', () => this.status({}));
     }
 
     function Consumer(config) {
@@ -176,8 +190,15 @@ module.exports = function register(RED) {
         const state = this.context();
         const source = JSON.stringify([config.gateway, client.identity, topic]);
         const cursorKey = 'kafkaHttpOffset_' + createHash('sha256').update(source).digest('hex');
-        let next = state.get(cursorKey);
-        if (!offset(next)) next = undefined;
+        // Callback form works with both synchronous and asynchronous context stores.
+        const load = () => new Promise((resolve, reject) => {
+            state.get(cursorKey, (error, value) => (error ? reject(error) : resolve(value)));
+        });
+        const save = value => new Promise((resolve, reject) => {
+            state.set(cursorKey, value, error => (error ? reject(error) : resolve()));
+        });
+        let next;
+        let loaded = false;
         let timer;
         let closing = false;
         let previousError;
@@ -188,6 +209,12 @@ module.exports = function register(RED) {
 
         const fetchPage = async () => {
             try {
+                if (!loaded) {
+                    const stored = await load();
+                    if (closing) return;
+                    next = offset(stored) ? stored : undefined;
+                    loaded = true;
+                }
                 const initialLatest = next === undefined && config.start !== 'earliest';
                 const query = { limit: initialLatest ? 1 : limit };
                 if (next !== undefined) query.offset = next;
@@ -214,7 +241,7 @@ module.exports = function register(RED) {
                     }
                     next = initialLatest ? body.endOffset : body.nextOffset;
                 }
-                state.set(cursorKey, next);
+                await save(next);
                 previousError = undefined;
                 this.status({ fill: 'green', shape: 'dot', text: 'offset ' + next });
             } catch (error) {

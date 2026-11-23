@@ -42,6 +42,8 @@ if (!certificateDirectory) {
 } else {
     test('publishes, polls and verifies the gateway hostname', { timeout: 12000 }, async () => {
         const requests = [];
+        let publishing = 0;
+        let maxPublishing = 0;
         const server = https.createServer({
             key: fs.readFileSync(join(certificateDirectory, 'key.pem')),
             cert: fs.readFileSync(join(certificateDirectory, 'cert.pem')),
@@ -57,6 +59,10 @@ if (!certificateDirectory) {
             const topic = 'device-one';
             response.setHeader('Content-Type', 'application/json');
             if (request.method === 'POST') {
+                publishing += 1;
+                maxPublishing = Math.max(maxPublishing, publishing);
+                if (JSON.parse(requests.at(-1).body).value?.delay) await new Promise(resolve => setTimeout(resolve, 150));
+                publishing -= 1;
                 response.statusCode = 201;
                 response.end(JSON.stringify({ topic, key: topic, partition: 0, offset: '1' }));
                 return;
@@ -80,7 +86,12 @@ if (!certificateDirectory) {
                 getNode: id => nodes.get(id),
                 createNode: (instance, config) => {
                     const events = new EventEmitter();
-                    const context = new Map();
+                    const values = new Map();
+                    // Asynchronous store: only the callback form of get and set is supported.
+                    const context = {
+                        get: (key, callback) => setImmediate(() => callback(null, values.get(key))),
+                        set: (key, value, callback) => setImmediate(() => { values.set(key, value); callback(null); }),
+                    };
                     Object.assign(instance, {
                         on: events.on.bind(events),
                         once: events.once.bind(events),
@@ -120,6 +131,7 @@ if (!certificateDirectory) {
             assert.equal(requests[0].authorization, 'Basic ' + Buffer.from('sample:test-only').toString('base64'));
             assert.equal(requests[0].url.pathname, '/kafka/v1/topics/device-one/messages');
             await assert.rejects(publish({}), /msg.payload/);
+            await assert.rejects(publish({ payload: Buffer.from('raw') }), /binary payloads/);
 
             consumer = deploy('kafka-http-consumer', { gateway: 'gateway', topic: 'device-one', interval: 1000 });
             const [record] = await once(consumer, 'sent', { signal: AbortSignal.timeout(5000) });
@@ -136,6 +148,15 @@ if (!certificateDirectory) {
             });
             await assert.rejects(invalidGateway.client.request('GET', 'device-one'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' });
             assert.equal(requests.length, 3);
+
+            const ordered = await Promise.all([
+                publish({ payload: { n: 1, delay: true } }),
+                publish({ payload: { n: 2 } }),
+                publish({ payload: { n: 3 } }),
+            ]);
+            assert.equal(ordered.length, 3);
+            assert.deepEqual(requests.slice(3).map(entry => JSON.parse(entry.body).value.n), [1, 2, 3]);
+            assert.equal(maxPublishing, 1, 'publishes must not overlap');
         } finally {
             consumer?.emit('close');
             invalidGateway?.emit('close');

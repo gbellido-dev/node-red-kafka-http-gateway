@@ -1,4 +1,19 @@
 <script type="text/javascript">
+    (function () {
+    function range(min, max) {
+        return function (value) {
+            const number = Number(value);
+            return Number.isSafeInteger(number) && number >= min && number <= max;
+        };
+    }
+    function ipAddress(value) {
+        value = String(value || '').trim();
+        if (!value) return true;
+        if (/^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/.test(value)) return true;
+        if (!/^[0-9a-fA-F:.]+$/.test(value) || !value.includes(':')) return false;
+        try { return new URL('https://[' + value + ']/').hostname.length > 2; } catch { return false; }
+    }
+
     RED.nodes.registerType('kafka-http-gateway-config', {
         category: 'config',
         defaults: {
@@ -9,8 +24,8 @@
                     return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash;
                 } catch { return false; }
             }},
-            connectAddress: { value: '' },
-            timeout: { value: 20000, required: true, validate: RED.validators.number() },
+            connectAddress: { value: '', validate: ipAddress },
+            timeout: { value: 20000, required: true, validate: range(1000, 120000) },
         },
         credentials: { username: { type: 'text' }, password: { type: 'password' } },
         label() { return this.name || this.baseUrl || 'Kafka HTTPS gateway'; }
@@ -38,8 +53,8 @@
             name: { value: '' },
             gateway: { value: '', type: 'kafka-http-gateway-config', required: true },
             topic: { value: '', required: true, validate: RED.validators.regex(/^[a-z0-9-]{1,249}$/) },
-            interval: { value: 5000, required: true, validate: RED.validators.number() },
-            limit: { value: 100, required: true, validate: RED.validators.number() },
+            interval: { value: 5000, required: true, validate: range(1000, 600000) },
+            limit: { value: 100, required: true, validate: range(1, 100) },
             start: { value: 'latest' },
         },
         inputs: 0,
@@ -48,6 +63,7 @@
         paletteLabel: 'kafka http consumer',
         label() { return this.name || this.topic || 'Kafka HTTP consumer'; }
     });
+    })();
 </script>
 
 <script type="text/html" data-template-name="kafka-http-gateway-config">
@@ -55,12 +71,13 @@
     <div class="form-row"><label for="node-config-input-baseUrl">Gateway URL</label><input type="url" id="node-config-input-baseUrl" placeholder="https://gateway.example.com"></div>
     <div class="form-row"><label for="node-config-input-username">Username</label><input type="text" id="node-config-input-username"></div>
     <div class="form-row"><label for="node-config-input-password">Password</label><input type="password" id="node-config-input-password"></div>
-    <div class="form-row"><label for="node-config-input-connectAddress">Connect IP</label><input type="text" id="node-config-input-connectAddress" placeholder="Optional DNS override"></div>
+    <div class="form-row"><label for="node-config-input-connectAddress">Connect IP</label><input type="text" id="node-config-input-connectAddress" placeholder="Optional IPv4 or IPv6 address"></div>
     <div class="form-row"><label for="node-config-input-timeout">Timeout (ms)</label><input type="number" id="node-config-input-timeout" min="1000" max="120000"></div>
 </script>
 
 <script type="text/html" data-help-name="kafka-http-gateway-config">
     <p>Configure the HTTPS base URL and optional HTTP Basic credentials for the Kafka gateway.</p>
+    <p>The username must not contain a colon. Leave both username and password empty if the gateway does not use authentication.</p>
     <p>Connect IP can route directly to an IPv4 or IPv6 address while retaining the DNS hostname for TLS verification and the HTTP Host header.</p>
 </script>
 
@@ -72,6 +89,7 @@
 
 <script type="text/html" data-help-name="kafka-http-producer">
     <p>Publishes <code>msg.payload</code> as a JSON value to the configured topic and adds the confirmed topic, partition, key and offset to <code>msg.kafka</code>.</p>
+    <p>Messages are published one at a time in arrival order. Binary payloads such as Buffers are rejected because the gateway accepts JSON values only.</p>
     <p>The gateway sets the key to the topic name. Publication errors can be handled with a Catch node.</p>
 </script>
 
