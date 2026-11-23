@@ -1,6 +1,6 @@
 {
   "name": "@gbellido/node-red-kafka-http-gateway",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Node-RED producer and consumer for an offset-based Kafka HTTPS gateway",
   "license": "MIT",
   "repository": {
