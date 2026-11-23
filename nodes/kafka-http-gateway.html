@@ -25,7 +25,7 @@
                 } catch { return false; }
             }},
             connectAddress: { value: '', validate: ipAddress },
-            timeout: { value: 20000, required: true, validate: range(1000, 120000) },
+            timeout: { value: 20000, required: true, validate: range(500, 120000) },
         },
         credentials: { username: { type: 'text' }, password: { type: 'password' } },
         label() { return this.name || this.baseUrl || 'Kafka HTTPS gateway'; }
@@ -53,7 +53,7 @@
             name: { value: '' },
             gateway: { value: '', type: 'kafka-http-gateway-config', required: true },
             topic: { value: '', required: true, validate: RED.validators.regex(/^[a-z0-9-]{1,249}$/) },
-            interval: { value: 5000, required: true, validate: range(1000, 600000) },
+            interval: { value: 5000, required: true, validate: range(500, 600000) },
             limit: { value: 100, required: true, validate: range(1, 100) },
             start: { value: 'latest' },
         },
@@ -72,7 +72,7 @@
     <div class="form-row"><label for="node-config-input-username">Username</label><input type="text" id="node-config-input-username"></div>
     <div class="form-row"><label for="node-config-input-password">Password</label><input type="password" id="node-config-input-password"></div>
     <div class="form-row"><label for="node-config-input-connectAddress">Connect IP</label><input type="text" id="node-config-input-connectAddress" placeholder="Optional IPv4 or IPv6 address"></div>
-    <div class="form-row"><label for="node-config-input-timeout">Timeout (ms)</label><input type="number" id="node-config-input-timeout" min="1000" max="120000"></div>
+    <div class="form-row"><label for="node-config-input-timeout">Timeout (ms)</label><input type="number" id="node-config-input-timeout" min="500" max="120000"></div>
 </script>
 
 <script type="text/html" data-help-name="kafka-http-gateway-config">
@@ -104,11 +104,12 @@
             <option value="earliest">Earliest retained record</option>
         </select>
     </div>
-    <div class="form-row"><label for="node-input-interval">Poll (ms)</label><input type="number" id="node-input-interval" min="1000" max="600000"></div>
+    <div class="form-row"><label for="node-input-interval">Poll (ms)</label><input type="number" id="node-input-interval" min="500" max="600000"></div>
     <div class="form-row"><label for="node-input-limit">Page size</label><input type="number" id="node-input-limit" min="1" max="100"></div>
 </script>
 
 <script type="text/html" data-help-name="kafka-http-consumer">
     <p>Polls one topic over HTTPS and emits one message per record, with the value in <code>msg.payload</code> and the key, offset, partition and timestamp in <code>msg.kafka</code>.</p>
+    <p><b>Poll</b> is the wait in milliseconds between requests to the gateway (500 to 600000). <b>Page size</b> is the maximum number of records read per request (1 to 100). If more records are pending, the rest are read on the following polls.</p>
     <p>The node stores its next offset in Node-RED context. First read applies when no saved offset exists. Use a persistent context store to retain the offset across system restarts.</p>
 </script>

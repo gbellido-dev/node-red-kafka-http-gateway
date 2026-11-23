@@ -54,7 +54,7 @@ function gatewayOptions(config, credentials = {}) {
         : undefined;
     return {
         base, hostname, address, authorization,
-        timeout: integer(config.timeout || 20000, 1000, 120000, 'Timeout'),
+        timeout: integer(config.timeout || 20000, 500, 120000, 'Timeout'),
     };
 }
 
@@ -186,7 +186,7 @@ module.exports = function register(RED) {
         try {
             if (!client) throw new Error('Select a valid Kafka HTTP gateway');
             topic = topicName(config.topic);
-            interval = integer(config.interval || 5000, 1000, 600000, 'Poll interval');
+            interval = integer(config.interval || 5000, 500, 600000, 'Poll interval');
             limit = integer(config.limit || 100, 1, 100, 'Page size');
         } catch (error) {
             this.status({ fill: 'red', shape: 'ring', text: 'configuration error' });
